@@ -1,105 +1,110 @@
 #!/bin/bash
+# ==============================================================================
+# WARNING: OPEN PROXY CONFIGURATION (ZERO AUTHENTICATION)
+# This script installs a Dante SOCKS5 proxy with NO password protection.
+# By running this, your proxy will be publicly accessible to the entire internet.
+# 
+# SEVERE SECURITY RISKS INCLUDE:
+# - Abuse by malicious actors (botnets, credential stuffing, spam campaigns).
+# - Complete bandwidth exhaustion and potential overage charges.
+# - Immediate violation of almost all VPS provider Terms of Service (ToS).
+# - Potential legal liability for malicious traffic routed through your IP.
+# ==============================================================================
 
-# Dante SOCKS5 Proxy - Simple One-Click Installer
-# Port: 1088 | Auth: None (Open Proxy)
-# ⚠️  WARNING: This creates an OPEN proxy accessible to anyone
+# Ensure script is run as root
+if [ "$EUID" -ne 0 ]; then
+  echo "Error: Please run as root or with sudo."
+  exit 1
+fi
 
-set -e
+echo "Starting Dante SOCKS5 open proxy installation..."
 
-# Check root
-[[ $EUID -ne 0 ]] && { echo "Run as root: sudo bash $0"; exit 1; }
-
-# Colors
-R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; NC='\033[0m'
-
-echo -e "${B}Installing Dante SOCKS5 Proxy...${NC}"
-
-# Update and install
+# 1. Update package lists and install dante-server
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq dante-server >/dev/null 2>&1
+apt-get update -y
+apt-get install -y dante-server
 
-# Detect interface
-IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-[[ -z "$IFACE" ]] && IFACE="eth0"
+# 2. Determine the active external network interface for Dante config
+# Dante requires a specific interface name for outbound traffic, not just an IP.
+EXT_IFACE=$(ip route get 8.8.8.8 | grep -Po '(?<=dev )[^ ]+' | head -n 1)
 
-echo -e "${B}Creating configuration...${NC}"
+if [ -z "$EXT_IFACE" ]; then
+    echo "Could not automatically determine the external network interface. Defaulting to eth0."
+    EXT_IFACE="eth0"
+fi
 
-# Backup existing config
-[[ -f /etc/danted.conf ]] && cp /etc/danted.conf /etc/danted.conf.backup.$(date +%s)
+echo "Detected external interface: $EXT_IFACE"
 
-# Write config directly (no heredoc)
-cat > /etc/danted.conf << 'ENDCONF'
-logoutput: /var/log/danted.log
-loglevel: error
+# 3. Generate idempotent /etc/danted.conf
+# Back up existing configuration if it exists
+if [ -f /etc/danted.conf ]; then
+    mv /etc/danted.conf /etc/danted.conf.backup_$(date +%s)
+fi
 
+cat > /etc/danted.conf <<EOF
+# Dante SOCKS5 Configuration
+logoutput: syslog
+
+# Listen on all IPv4 interfaces on port 1088
 internal: 0.0.0.0 port = 1088
-external: INTERFACE_PLACEHOLDER
 
+# Route outbound traffic through the primary network interface
+external: $EXT_IFACE
+
+# Require SOCKS5 (no authentication)
 socksmethod: none
 clientmethod: none
 
+# Allow all clients to connect to the proxy
 client pass {
     from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: error
+    log: error connect disconnect
 }
 
+# Allow all traffic to pass through the proxy
 socks pass {
     from: 0.0.0.0/0 to: 0.0.0.0/0
-    protocol: tcp udp
-    log: error
+    command: bind connect udpassociate
+    log: error connect disconnect
 }
-ENDCONF
+EOF
 
-# Replace placeholder
-sed -i "s/INTERFACE_PLACEHOLDER/$IFACE/" /etc/danted.conf
-
-# Create log file
-touch /var/log/danted.log
-chmod 644 /var/log/danted.log
-
-# Create/update systemd service
-cat > /etc/systemd/system/danted.service << 'ENDSVC'
-[Unit]
-Description=Dante SOCKS5 Proxy
-After=network.target
-
-[Service]
-Type=forking
-PIDFile=/run/danted.pid
-ExecStart=/usr/sbin/danted -f /etc/danted.conf
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-ENDSVC
-
-# Reload and start
-systemctl daemon-reload
-systemctl enable danted >/dev/null 2>&1
+# 4. Enable and start danted service via systemd
+echo "Applying configuration and restarting Dante..."
+systemctl enable danted
 systemctl restart danted
 
-sleep 2
-
-# Verify
+# 5. Verify service is running
+sleep 2 # Give systemd a moment to bring up the service
 if systemctl is-active --quiet danted; then
-    PUBLIC_IP=$(curl -s -4 --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-    
-    echo ""
-    echo -e "${G}✓ Dante SOCKS5 Proxy is running!${NC}"
-    echo ""
-    echo "  Host: $PUBLIC_IP"
-    echo "  Port: 1088"
-    echo "  Type: SOCKS5 (no auth)"
-    echo ""
-    echo "Test: curl --proxy socks5://$PUBLIC_IP:1088 https://ipinfo.io/ip"
-    echo ""
-    echo -e "${Y}⚠️  This is an OPEN proxy - anyone can use it!${NC}"
-    echo "Monitor: journalctl -u danted -f"
-    echo "Stop: systemctl stop danted"
-    echo ""
+    echo "Dante service is ACTIVE."
 else
-    echo -e "${R}✗ Failed to start danted${NC}"
-    echo "Logs: journalctl -u danted -n 50"
-    exit 1
+    echo "Warning: Dante service failed to start. Check 'systemctl status danted' for details."
 fi
+
+# Check if listening on 1088
+if ss -tuln | grep -q ":1088 "; then
+    echo "Verified: Dante is actively listening on port 1088."
+else
+    echo "Warning: Cannot detect Dante listening on port 1088."
+fi
+
+# 6. Display connection instructions
+PUBLIC_IP=$(curl -s -4 ifconfig.me || wget -qO- ipv4.icanhazip.com)
+if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP="<YOUR_VPS_IP>"
+fi
+
+echo ""
+echo "============================================================"
+echo "INSTALLATION COMPLETE"
+echo "============================================================"
+echo "Your open SOCKS5 proxy is now running."
+echo "Connection Details:"
+echo "IP Address : $PUBLIC_IP"
+echo "Port       : 1088"
+echo "Protocol   : SOCKS5"
+echo "Auth       : None (Open)"
+echo ""
+echo "WARNING: This proxy is completely unprotected. Anyone can use it."
+echo "============================================================"
