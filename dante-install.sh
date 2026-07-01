@@ -248,6 +248,8 @@ socks pass {
 #     log: connect error  
 # }  
 EOF  
+# The above EOF must be on its own line, with no leading or trailing whitespace.  
+# It closes the here-document started at `cat > "$CONFIG_FILE" <<EOF`  
 
     if [[ $? -eq 0 ]]; then  
         log_success "Configuration file created successfully"  
@@ -313,6 +315,8 @@ RestartSec=5s
 [Install]  
 WantedBy=multi-user.target  
 EOF  
+# The above EOF must be on its own line, with no leading or trailing whitespace.  
+# It closes the here-document started at `cat > /etc/systemd/system/danted.service <<EOF`  
     fi  
     
     # Reload systemd daemon to recognize any changes  
