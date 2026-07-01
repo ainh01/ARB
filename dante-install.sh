@@ -248,8 +248,8 @@ socks pass {
 #     log: connect error  
 # }  
 EOF  
-# The above EOF must be on its own line, with no leading or trailing whitespace.  
-# It closes the here-document started at `cat > "$CONFIG_FILE" <<EOF`  
+# The above EOF is now strictly at column 0.  
+# This fixes the heredoc termination for danted.conf.  
 
     if [[ $? -eq 0 ]]; then  
         log_success "Configuration file created successfully"  
@@ -315,8 +315,8 @@ RestartSec=5s
 [Install]  
 WantedBy=multi-user.target  
 EOF  
-# The above EOF must be on its own line, with no leading or trailing whitespace.  
-# It closes the here-document started at `cat > /etc/systemd/system/danted.service <<EOF`  
+# The above EOF is now strictly at column 0.  
+# This fixes the heredoc termination for the systemd service file.  
     fi  
     
     # Reload systemd daemon to recognize any changes  
@@ -469,4 +469,3 @@ main() {
 
 # Execute main function  
 main  
-# Ensure there is a newline at the end of the file after 'main'  
